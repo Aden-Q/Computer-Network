@@ -33,30 +33,36 @@ int pacRecv(struct clientlist *pM, char *ptr, int length);        //子线程消息接
 int pacSend(struct clientlist *pM, char *pactype);                //子线程消息发送函数
 int pacTransMessage(struct clientlist *pM, char *ptr, int *dest); //用于消息请求数据包的后半段内容接收
 void getTime(char *timestring);                                   //获取服务器系统时间
+unsigned int __stdcall exitCheck(PVOID pM);                       //结束信号检测线程
+unsigned int __stdcall ThreadFun(PVOID pM);                       //响应客户端线程函数
 
-bool exitsignal = false;
-int clientcount = 0; //已创建线程数
+bool exitsignal = false;		 //全局的进程退出信号
+int clientcount = 0;			 //已创建线程数
 struct clientlist
 {
 	struct sockaddr_in saClient; //客户端地址端口号等信息
 	SOCKET sServer;              //服务端为该客户端创建的套接字
 	int clientnumebr;            //客户端编号
 	bool isalive = false;        //用户端是否存活
+	bool prosignal = false;      //客户端结构体内部的退出信号，用来退出单个客户端
 } saClientlist[MAX_NUM];
 
 //定义线程函数
 unsigned int __stdcall ThreadFun(PVOID pM)
 {
+	struct  clientlist* curClient = (struct clientlist*)pM;
 	int ret; //接收消息返回值
 	int nLeft = 0;
-	char hlomsg[] = "9Hello"; //9相当于是数据包标志位
+	char hlomsg[] = "9005Hello";		//9相当于是数据包标志位,005表示内容长度
 	char message[1000] = "";
 	char pactype[PAC_TYPE_LEN + 1];      //数据包类型字符串1位，最后一位\0标志字符串结束
 	char paclength[PAC_CONTENT_LEN + 1]; //数据包内容长度字段3位，最后一位\0标志字符串结束
 	pactype[PAC_TYPE_LEN] = '\0';        //提前写好字符串结束符
 	paclength[PAC_CONTENT_LEN] = '\0';   //提前写好字符串结束符
 
-	printf("Server say Hello to subthread with ID:%4d\n", GetCurrentThreadId());
+	//说一下我要给对方客户端发送Hello消息了
+	printf("Server say Hello to client: %s:%d\n", inet_ntoa((curClient->saClient.sin_addr)), ntohs((curClient->saClient).sin_port));
+	printf("* * * * * * * * * * * * * * * * * * * * * * * *\n");
 
 	//子线程发送一个Hello消息给客户端
 	ret = send(((struct clientlist *)pM)->sServer, (char *)&hlomsg, sizeof(hlomsg), 0);
@@ -67,17 +73,17 @@ unsigned int __stdcall ThreadFun(PVOID pM)
 
 	while (true)
 	{
-
-		if (exitsignal == true)
+		//如果收到当前线程退出的信号或收到全部线程退出信号
+		if (curClient->prosignal == true || exitsignal == true)
 		{                                                    //如果主线程收到结束信号，则终止各个子线程，子线程用return方式终止，最为安全的方式
-			closesocket(((struct clientlist *)pM)->sServer); //关闭连接套接字
+			closesocket(curClient->sServer);	//关闭连接套接字
 			return -1;
 		}
 
-		ret = pacRecv((struct clientlist *)pM, (char *)&pactype, PAC_TYPE_LEN); //指定消息接受函数去接受两个字符长度的数据包类型字段
+		ret = pacRecv(curClient, (char *)&pactype, PAC_TYPE_LEN); //指定消息接受函数去接受两个字符长度的数据包类型字段
 
 		//当pacRecv函数没有检测到远端退出信号的时候再去发送数据包，不然会多发一次
-		if (!exitsignal)
+		if (!(curClient->prosignal == true || exitsignal == true))
 			pacSend((struct clientlist *)pM, pactype);
 	}
 
@@ -95,20 +101,14 @@ int pacRecv(struct clientlist *pM, char *ptr, int length)
 	{
 		//接收数据
 		ret = recv(pM->sServer, ptr, nLeft, 0);
-		if (ret == SOCKET_ERROR)
+		if (ret == SOCKET_ERROR || ret == 0)
 		{
-			exitsignal = true;
+			pM->prosignal = true; //通知线程退出
 			printf("Client Number:%d has closed the connection!\n", pM->clientnumebr);
 			rflag = PAC_ERROR;
 			break;
 		}
 
-		if (ret == 0)
-		{
-			exitsignal = true;
-			printf("Client  Number:%d has closed the connection!\n", pM->clientnumebr);
-			rflag = PAC_ERROR;
-		}
 		nLeft -= ret;
 		ptr += ret;
 	}
@@ -139,9 +139,11 @@ int pacSend(struct clientlist *pM, char *pactype)
 		sprintf(slength, "%03d", length); //长度转为三位字符串，不足则前面补0
 		strcat(message, slength);
 		strcat(message, timestring); //连接完成，得到封装好的数据包message
+		
 		printf("Server time: %s\n", timestring);
 		printf("Client Number %d requestes system time on server!\n", pM->clientnumebr); //server上打印说哪个客户端请求了服务器上的系统时间
 		ret = send(pM->sServer, (char *)&message, strlen(message), 0);                   //发送主机时间的数据包
+		printf("* * * * * * * * * * * * * * * * * * * * * * * *\n");
 	}
 	else if (strcmp(pactype, REQ_NAME) == 0) //如果是请求服务器名字的数据包，系统调用获取名字
 	{
@@ -157,6 +159,7 @@ int pacSend(struct clientlist *pM, char *pactype)
 		strcat(message, slength);                                                     //添加响应数据包长度字段
 		strcat(message, hostname);                                                    //添加响应数据包内容字段
 		printf("Client Number %d requestes hostname on server!\n", pM->clientnumebr); //server上打印哪个客户端请求了服务器主机名
+		printf("* * * * * * * * * * * * * * * * * * * * * * * *\n");
 		ret = send(pM->sServer, (char *)&message, strlen(message), 0);                //发送主机名字的数据包
 	}
 	else if (strcmp(pactype, REQ_LIST) == 0)
@@ -179,9 +182,10 @@ int pacSend(struct clientlist *pM, char *pactype)
 		strcat(fmessage, slength);
 		strcat(fmessage, message);
 		printf("Client Number %d requestes clientlist on server!\n", pM->clientnumebr); //server上打印说哪个客户端请求了连接服务器列表
+		printf("* * * * * * * * * * * * * * * * * * * * * * * *\n");
 		ret = send(pM->sServer, (char *)&fmessage, strlen(fmessage), 0);
 	}
-	else if (strcmp(pactype, REQ_MSG) == 0)	//如果是消息转发请求的数据包，需要长度字段和内容，继续读取后续字段
+	else if (strcmp(pactype, REQ_MSG) == 0) //如果是消息转发请求的数据包，需要长度字段和内容，继续读取后续字段
 	{
 		getTime(timestring);
 		length = strlen(timestring);                                        //内容长度
@@ -232,21 +236,16 @@ int pacTransMessage(struct clientlist *pM, char *ptr, int *dest)
 	{
 		//接收数据
 		ret = recv(pM->sServer, sigptr, nLeft, 0);
-		if (ret == SOCKET_ERROR)
+		//远端断开连接的信号
+		if (ret == SOCKET_ERROR || ret == 0)
 		{
-			exitsignal = true;
+			pM->prosignal = true;
 			//printf("Recv failed!\n");
 			printf("Client Number:%d has closed the connection!\n", pM->clientnumebr);
 			rflag = PAC_ERROR;
 			break;
 		}
 
-		if (ret == 0)
-		{
-			exitsignal = true;
-			printf("Client Number:%d has closed the connection!\n", pM->clientnumebr);
-			rflag = PAC_ERROR;
-		}
 		nLeft -= ret;
 		sigptr += ret;
 	}
@@ -262,16 +261,15 @@ int pacTransMessage(struct clientlist *pM, char *ptr, int *dest)
 		ret = recv(pM->sServer, ptr, nLeft, 0);
 		if (ret == SOCKET_ERROR)
 		{
-			exitsignal = true;
+			pM->prosignal = true;
 			printf("Client Number:%d has closed the connection!\n", pM->clientnumebr);
-			//printf("Recv failed!\n");
 			rflag = PAC_ERROR;
 			break;
 		}
 
 		if (ret == 0)
 		{
-			exitsignal = true;
+			pM->prosignal = true;
 			printf("Client Number:%d has closed the connection!\n", pM->clientnumebr);
 			rflag = PAC_ERROR;
 		}
@@ -313,6 +311,22 @@ void getTime(char *timestring)
 	return;
 }
 
+//检测退出信号的线程，如果该线程检测到退出信号，通知各个线程结束以及主进程退出
+unsigned int __stdcall exitCheck(PVOID pM)
+{
+	char flag;
+	while (true)
+	{
+		scanf_s("%c", &flag);
+		if (flag == 'q')
+		{
+			exitsignal = true; //通知全部线程结束
+			return 0;
+		}
+	}
+	return 0;
+}
+
 void main()
 {
 	WORD wVersionRequested;
@@ -323,6 +337,7 @@ void main()
 	char *ptr;                             //参数传递用
 	const int THREAD_NUM = MAX_NUM;        //最多允许连接的客户端数
 	HANDLE handle[THREAD_NUM];             //返回句柄数组
+	HANDLE exitprocess;                    //检测退出信号的线程
 	int clientcount = 0;
 	SOCKET clientlist[THREAD_NUM];             //允许多少个线程就允许开多少个socket
 	struct sockaddr_in clientaddr[THREAD_NUM]; //记录客户端地址信息，允许开多少个线程就允许存在多少个客户端
@@ -379,14 +394,19 @@ void main()
 	}
 
 	//提示语句
+	printf("* * * * * * * * * * * * * * * * * * * * * * * *\n");
 	printf("Waiting for client connecting!\n");
 	printf("tips : Ctrl+c to quit!\n");
+	printf("* * * * * * * * * * * * * * * * * * * * * * * *\n");
 
 	length = sizeof(saClient);
 
 	//阻塞等待客户端连接
 	while (true)
 	{
+		//如果总的线程退出信号为true，则跳出循环而不是阻塞在等待连接的地方
+		if (exitsignal == true)
+			break;
 		sServer = accept(sListen, (struct sockaddr *)&saClient, &length);
 		if (sServer == INVALID_SOCKET)
 		{
