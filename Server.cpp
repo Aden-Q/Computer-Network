@@ -75,7 +75,7 @@ unsigned int __stdcall ThreadFun(PVOID pM)
 	{
 		//如果收到当前线程退出的信号或收到全部线程退出信号
 		if (curClient->prosignal == true || exitsignal == true)
-		{                                                    //如果主线程收到结束信号，则终止各个子线程，子线程用return方式终止，最为安全的方式
+		{                                       //如果主线程收到结束信号，则终止各个子线程，子线程用return方式终止，最为安全的方式
 			curClient->isalive = false;
 			closesocket(curClient->sServer);	//关闭连接套接字
 			return -1;
@@ -172,11 +172,13 @@ int pacSend(struct clientlist *pM, char *pactype)
 			if (saClientlist[i].isalive == true)
 			{ //如果是存活的客户端，打包客户端信息
 				if (ccount == 0) {	//如果是第一个要打印的
-					sprintf(newmsg, "%d-%s-%d", saClientlist[i].clientnumebr, inet_ntoa(saClientlist[i].saClient.sin_addr), ntohs(saClientlist[i].saClient.sin_port));
+					sprintf(newmsg, "%d-%s-%d", saClientlist[i].clientnumebr, inet_ntoa(saClientlist[i].saClient.sin_addr), ntohs(saClientlist
+						[i].saClient.sin_port));
 					strcat(message, newmsg);
 				}
 				else {	//如果前面已经有了一些字段
-					sprintf(newmsg, "_%d-%s-%d", saClientlist[i].clientnumebr, inet_ntoa(saClientlist[i].saClient.sin_addr), ntohs(saClientlist[i].saClient.sin_port));
+					sprintf(newmsg, "_%d-%s-%d", saClientlist[i].clientnumebr, inet_ntoa(saClientlist[i].saClient.sin_addr), ntohs(saClientlist
+						[i].saClient.sin_port));
 					strcat(message, newmsg);
 				}
 				ccount++;
@@ -193,7 +195,7 @@ int pacSend(struct clientlist *pM, char *pactype)
 	{
 		getTime(timestring);
 		length = strlen(timestring);                                        //内容长度
-		pacTransMessage(pM, (char *)&message, &dest);                       //继续从sServer套接字接收消息，并存放到message里面，后面发送此message,dest中保存目的客户端的编号
+		pacTransMessage(pM, (char *)&message, &dest);                       //继续从sServer套接字接收消息，并存放到message里面并发送
 		strcat(fmessage, COM_MSG);                                          //标志为指示数据包
 		sprintf(slength, "%03d", strlen(message) + 4 + strlen(timestring)); //3位打印消息长度
 		strcat(fmessage, slength);                                          //字符串连接，补上长度项
@@ -203,6 +205,7 @@ int pacSend(struct clientlist *pM, char *pactype)
 		strcat(fmessage, timestring);                                       //时间字段
 		strcat(fmessage, "_");
 		strcat(fmessage, message); //补上内容，补全数据包
+		printf("Client number: %d say %s to client number: %d\n", pM->clientnumebr, message, dest);	//服务器上打印一下发送了什么消息
 
 		if (saClientlist[dest].isalive == true)
 		{
