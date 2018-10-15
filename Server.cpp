@@ -76,6 +76,7 @@ unsigned int __stdcall ThreadFun(PVOID pM)
 		//如果收到当前线程退出的信号或收到全部线程退出信号
 		if (curClient->prosignal == true || exitsignal == true)
 		{                                                    //如果主线程收到结束信号，则终止各个子线程，子线程用return方式终止，最为安全的方式
+			curClient->isalive = false;
 			closesocket(curClient->sServer);	//关闭连接套接字
 			return -1;
 		}
@@ -164,18 +165,21 @@ int pacSend(struct clientlist *pM, char *pactype)
 	}
 	else if (strcmp(pactype, REQ_LIST) == 0)
 	{                               //如果是请求连接列表的数据包，列出所有的连接服务器列表
+		int ccount = 0;				//活着的主机数
 		strcat(fmessage, RES_LIST); //标志列表响应数据包
 		for (int i = 0; i < MAX_NUM; i++)
 		{
 			if (saClientlist[i].isalive == true)
 			{ //如果是存活的客户端，打包客户端信息
-				sprintf(message, "%d", saClientlist[i].clientnumebr);
-				strcat(message, "-");
-				sprintf(newmsg, "%s", inet_ntoa(saClientlist[i].saClient.sin_addr));
-				strcat(message, newmsg);
-				strcat(message, "-");
-				sprintf(newmsg, "%d\n", ntohs(saClientlist[i].saClient.sin_port));
-				strcat(message, newmsg);
+				if (ccount == 0) {	//如果是第一个要打印的
+					sprintf(newmsg, "%d-%s-%d", saClientlist[i].clientnumebr, inet_ntoa(saClientlist[i].saClient.sin_addr), ntohs(saClientlist[i].saClient.sin_port));
+					strcat(message, newmsg);
+				}
+				else {	//如果前面已经有了一些字段
+					sprintf(newmsg, "_%d-%s-%d", saClientlist[i].clientnumebr, inet_ntoa(saClientlist[i].saClient.sin_addr), ntohs(saClientlist[i].saClient.sin_port));
+					strcat(message, newmsg);
+				}
+				ccount++;
 			}
 		}
 		sprintf(slength, "%03d", strlen(message));
@@ -193,7 +197,7 @@ int pacSend(struct clientlist *pM, char *pactype)
 		strcat(fmessage, COM_MSG);                                          //标志为指示数据包
 		sprintf(slength, "%03d", strlen(message) + 4 + strlen(timestring)); //3位打印消息长度
 		strcat(fmessage, slength);                                          //字符串连接，补上长度项
-		sprintf(newmsg, "%02d", dest);                                      //目标客户端的编号
+		sprintf(newmsg, "%02d", pM->clientnumebr);                          //源客户端的编号
 		strcat(fmessage, newmsg);                                           //加上这个字节
 		strcat(fmessage, "_");                                              //用下划线分隔
 		strcat(fmessage, timestring);                                       //时间字段
@@ -384,7 +388,7 @@ void main()
 	}
 
 	//侦听连接请求
-	ret = listen(sListen, MAX_NUM); //连接等待队列长度为5，可以往大了设置
+	ret = listen(sListen, MAX_NUM); //连接等待队列长度为20，可以往大了设置
 	if (ret == SOCKET_ERROR)
 	{
 		printf("listen() failed! code:%d\n", WSAGetLastError());
